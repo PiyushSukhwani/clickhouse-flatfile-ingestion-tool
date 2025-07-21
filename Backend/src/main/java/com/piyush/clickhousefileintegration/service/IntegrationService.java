@@ -1,5 +1,6 @@
 package com.piyush.clickhousefileintegration.service;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import com.piyush.clickhousefileintegration.model.ClickHouseConfig;
 import com.piyush.clickhousefileintegration.model.ColumnMetadata;
+import com.piyush.clickhousefileintegration.model.FlatFileConfig;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +21,8 @@ import lombok.extern.slf4j.Slf4j;
 public class IntegrationService {
 
     private final ClickHouseService clickHouseService;
+
+    private final FlatFileService flatFileService;
 
     /**
      * Fetches the list of tables from ClickHouse
@@ -63,6 +67,18 @@ public class IntegrationService {
         try (Connection connection = clickHouseService.connect(config)) {
             return clickHouseService.previewData(connection, tableName, columns, limit);
         }
+    }
+
+    /**
+     * Fetches the schema of a flat file
+     *
+     * @param config Flat file configuration
+     * @return List of column metadata
+     * @throws IOException if file operation fails
+     * @throws InterruptedException 
+     */
+    public List<ColumnMetadata> getFlatFileSchema(FlatFileConfig config) throws IOException, InterruptedException {
+        return flatFileService.readFileSchema(config);
     }
 
 }

@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.piyush.clickhousefileintegration.model.ClickHouseConfig;
 import com.piyush.clickhousefileintegration.model.ColumnMetadata;
+import com.piyush.clickhousefileintegration.model.FlatFileConfig;
 import com.piyush.clickhousefileintegration.model.IngestionRequest;
 import com.piyush.clickhousefileintegration.service.IntegrationService;
 
@@ -124,6 +125,28 @@ public class IntegrationController {
             log.error("Error previewing ClickHouse data", e);
             response.put("success", false);
             response.put("message", "Failed to preview data: " + e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        }
+    }
+
+    /**
+     * Gets the schema of a flat file
+     *
+     * @param config Flat file configuration
+     * @return List of column metadata
+     */
+    @PostMapping("/flatfile/schema")
+    public ResponseEntity<Map<String, Object>> getFlatFileSchema(@RequestBody FlatFileConfig config) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            List<ColumnMetadata> columns = integrationService.getFlatFileSchema(config);
+            response.put("success", true);
+            response.put("columns", columns);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Error getting flat file schema", e);
+            response.put("success", false);
+            response.put("message", "Failed to get schema: " + e.getMessage());
             return ResponseEntity.badRequest().body(response);
         }
     }
