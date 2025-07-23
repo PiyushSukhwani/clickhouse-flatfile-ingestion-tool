@@ -81,4 +81,18 @@ public class IntegrationService {
         return flatFileService.readFileSchema(config);
     }
 
+    /**
+     * Previews data from a flat file
+     *
+     * @param config  Flat file configuration
+     * @param columns List of columns to preview
+     * @param limit   Maximum number of rows to preview
+     * @return List of data rows
+     * @throws IOException if file operation fails
+     * @throws InterruptedException 
+     */
+    public List<Map<String, Object>> previewFlatFileData(FlatFileConfig config, List<ColumnMetadata> columns,
+            int limit) throws IOException, InterruptedException {
+        return flatFileService.readData(config, columns, limit);
+    }
 }

@@ -151,4 +151,33 @@ public class IntegrationController {
         }
     }
 
+    /**
+     * Previews data from a flat file
+     *
+     * @param request Ingestion request with source configuration and column selection
+     * @return Preview data
+     */
+    @PostMapping("/flatfile/preview")
+    public ResponseEntity<Map<String, Object>> previewFlatFileData(@RequestBody IngestionRequest request) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            // Log the request for debugging
+            log.info("Received preview request for flat file: {}", request.getFlatFileConfig());
+            log.info("Selected columns: {}", request.getSelectedColumns());
+            
+            List<Map<String, Object>> data = integrationService.previewFlatFileData(
+                    request.getFlatFileConfig(),
+                    request.getSelectedColumns(),
+                    100); // Preview limit
+            
+            response.put("success", true);
+            response.put("data", data);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Error previewing flat file data", e);
+            response.put("success", false);
+            response.put("message", "Failed to preview data: " + e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        }
+    }
 }

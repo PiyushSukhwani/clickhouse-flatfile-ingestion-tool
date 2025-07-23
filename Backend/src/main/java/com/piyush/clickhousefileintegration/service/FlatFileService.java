@@ -13,15 +13,18 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -119,8 +122,8 @@ public class FlatFileService {
      *
      * @param config Flat file configuration
      * @return List of column metadata
-     * @throws IOException if file reading fails
-     * @throws InterruptedException 
+     * @throws IOException          if file reading fails
+     * @throws InterruptedException
      */
     public List<ColumnMetadata> readFileSchema(FlatFileConfig config) throws IOException, InterruptedException {
         List<ColumnMetadata> columns = new ArrayList<>();
@@ -244,4 +247,181 @@ public class FlatFileService {
         return "String";
     }
 
+    /**
+     * Reads data from a flat file
+     *
+     * @param config  Flat file configuration
+     * @param columns List of columns to read
+     * @param limit   Maximum number of rows to read (for preview)
+     * @return List of maps representing rows of data
+     * @throws IOException          if file reading fails
+     * @throws InterruptedException
+     */
+    public List<Map<String, Object>> readData(FlatFileConfig config, List<ColumnMetadata> columns, int limit)
+            throws IOException, InterruptedException {
+        List<Map<String, Object>> results = new ArrayList<>();
+
+        // Validate config and file name
+        if (config == null || config.getFileName() == null) {
+            log.error("Invalid flat file config: {}", config);
+            throw new IOException("File name cannot be null");
+        }
+
+        // Validate columns
+        if (columns == null || columns.isEmpty()) {
+            log.warn("Column list is null or empty, nothing to preview");
+            return results;
+        }
+
+        // Resolve file path or URL
+        String resolvedFilePath = resolveFilePathOrUrl(config.getFileName());
+        log.info("Resolved file path: {}", resolvedFilePath);
+
+        // Get selected column names
+        List<String> selectedColumnNames = getSelectedColumnNames(columns);
+
+        if (selectedColumnNames.isEmpty()) {
+            log.warn("No valid columns available to preview after selection");
+            return results;
+        }
+
+        log.info("Reading data from file: {}", resolvedFilePath);
+        log.info("Selected columns for preview: {}", selectedColumnNames);
+
+        Charset encoding = (config.getEncoding() != null && !config.getEncoding().isEmpty())
+                ? Charset.forName(config.getEncoding())
+                : StandardCharsets.UTF_8;
+        char delimiter = (config.getDelimiter() != null && !config.getDelimiter().isEmpty())
+                ? config.getDelimiter().charAt(0)
+                : ',';
+        // Configure CSV parser based on the delimiter
+        CSVFormat csvFormat = CSVFormat.DEFAULT.builder()
+                .setHeader()
+                .setSkipHeaderRecord(config.isHasHeader())
+                .setIgnoreHeaderCase(true)
+                .setAllowMissingColumnNames(true)
+                .setDelimiter(delimiter)
+                .build();
+
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(new FileInputStream(resolvedFilePath), encoding));
+                CSVParser csvParser = new CSVParser(reader, csvFormat)) {
+            int rowCount = 0;
+            Map<String, Integer> headerMap = csvParser.getHeaderMap();
+            log.info("CSV header map: {}", headerMap);
+
+            for (CSVRecord record : csvParser) {
+                if (limit > 0 && rowCount >= limit) {
+                    break;
+                }
+
+                Map<String, Object> row = config.isHasHeader()
+                        ? readRowUsingHeader(record, selectedColumnNames, headerMap)
+                        : readRowUsingIndex(record, selectedColumnNames);
+
+                results.add(row);
+                rowCount++;
+            }
+
+            log.info("Read {} records from file", rowCount);
+
+        } catch (Exception e) {
+            log.error("Error reading data from file: {}", e.getMessage(), e);
+            log.error("File path: {}, Delimiter: '{}', Has Header: {}, Encoding: {}",
+                    resolvedFilePath, delimiter, config.isHasHeader(), config.getEncoding());
+            log.error("Selected columns: {}", selectedColumnNames);
+            throw new IOException("Error reading data from file: " + e.getMessage(), e);
+        }
+
+        return results;
+    }
+
+    private List<String> getSelectedColumnNames(List<ColumnMetadata> columns) {
+        List<String> selected = columns.stream()
+                .filter(col -> col != null && col.isSelected() && col.getName() != null).map(ColumnMetadata::getName)
+                .collect(Collectors.toList());
+
+        // Auto-select all columns if none were explicitly selected
+        if (selected.isEmpty()) {
+            columns.stream()
+                    .filter(column -> column != null && column.getName() != null)
+                    .peek(column -> column.setSelected(true)) // side-effect like in your original loop
+                    .map(ColumnMetadata::getName)
+                    .forEach(selected::add);
+        }
+
+        return selected;
+    }
+
+    /**
+     * Constructs a row map from a CSV record using custom or undefined column names
+     * (by index).
+     *
+     * This method assumes the CSV has no headers and maps each value in the record
+     * to the corresponding
+     * column name in the provided list. If the record has fewer fields than column
+     * names, remaining
+     * values are filled with empty strings.
+     *
+     * @param record      The CSV record to extract data from.
+     * @param columnNames List of column names to map values to (ordered by
+     *                    position).
+     * @return A map representing a row with column names as keys and record values
+     *         as values.
+     */
+
+    private Map<String, Object> readRowUsingIndex(CSVRecord record, List<String> columnNames) {
+        Map<String, Object> row = new HashMap<>();
+        for (int i = 0; i < columnNames.size(); i++) {
+            String value = i < record.size() ? record.get(i) : "";
+            row.put(columnNames.get(i), value);
+        }
+        return row;
+    }
+
+    /**
+     * Constructs a row map from a CSV record using defined column names from the
+     * header.
+     *
+     * This method attempts to retrieve values based on the provided column names.
+     * If a column name
+     * does not directly match a header in the CSV, a case-insensitive match is
+     * attempted.
+     * If no match is found, the value is set as an empty string.
+     *
+     * @param record      The CSV record to extract data from.
+     * @param columnNames List of expected column names.
+     * @param headerMap   The header map from the CSV parser for name lookup.
+     * @return A map representing a row with column names as keys and corresponding
+     *         record values.
+     */
+
+    private Map<String, Object> readRowUsingHeader(CSVRecord record, List<String> columnNames,
+            Map<String, Integer> headerMap) {
+        Map<String, Object> row = new HashMap<>();
+
+        for (String columnName : columnNames) {
+            try {
+                String value = record.get(columnName);
+                row.put(columnName, value);
+            } catch (IllegalArgumentException e) {
+                // Try case-insensitive match
+                boolean found = false;
+                for (String header : headerMap.keySet()) {
+                    if (header.equalsIgnoreCase(columnName)) {
+                        row.put(columnName, record.get(header));
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    log.warn("Column '{}' not found in CSV header", columnName);
+                    row.put(columnName, "");
+                }
+            }
+        }
+
+        return row;
+    }
 }
