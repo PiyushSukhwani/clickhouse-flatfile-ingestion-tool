@@ -2,6 +2,7 @@ package com.piyush.clickhousefileintegration.service;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -11,6 +12,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import org.springframework.stereotype.Service;
 
@@ -141,6 +144,72 @@ public class ClickHouseService {
         }
 
         return results;
+    }
+
+    /**
+     * Inserts data into a ClickHouse table using batch processing.
+     *
+     * @param connection ClickHouse database connection
+     * @param tableName  Name of the target table
+     * @param columns    List of column metadata with selection flags
+     * @param data       List of rows to insert, each represented as a map of column
+     *                   name to value
+     * @return Number of records successfully inserted
+     * @throws SQLException if an error occurs during insert execution
+     */
+    public int insertData(Connection connection, String tableName, List<ColumnMetadata> columns,
+            List<Map<String, Object>> data) throws SQLException {
+        if (data.isEmpty()) {
+            return 0;
+        }
+
+        // Build list of selected column names
+        List<String> selectedColumnNames = columns.stream()
+                .filter(ColumnMetadata::isSelected)
+                .map(ColumnMetadata::getName)
+                .collect(Collectors.toList());
+
+        if (selectedColumnNames.isEmpty()) {
+            return 0;
+        }
+
+        // Format column names for SQL (e.g., `ColumnA`, `ColumnB`)
+        String columnList = selectedColumnNames.stream()
+                .map(name -> "`" + name + "`")
+                .collect(Collectors.joining(", "));
+
+        // Generate placeholders (?, ?, ...) for prepared statement
+        String placeholders = IntStream.range(0, selectedColumnNames.size())
+                .mapToObj(i -> "?")
+                .collect(Collectors.joining(", "));
+
+        String insertQuery = String.format("INSERT INTO %s (%s) VALUES (%s)", tableName, columnList, placeholders);
+        System.out.println("This is the insert query string: " + insertQuery);
+
+        // Use batch insert for better performance
+        try (PreparedStatement pstmt = connection.prepareStatement(insertQuery)) {
+            int batchSize = 10000;
+            int count = 0;
+
+            for (Map<String, Object> row : data) {
+                int paramIndex = 1;
+                for (String columnName : selectedColumnNames) {
+                    pstmt.setObject(paramIndex++, row.get(columnName));
+                }
+
+                pstmt.addBatch();
+                count++;
+
+                if (count % batchSize == 0) {
+                    pstmt.executeBatch();
+                    log.info("Inserted {} records", count);
+                    return count;
+                }
+            }
+
+            pstmt.executeBatch(); // insert remaining records
+            return count;
+        }
     }
 
 }
