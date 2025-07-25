@@ -147,6 +147,88 @@ public class ClickHouseService {
     }
 
     /**
+     * Creates a ClickHouse table if it does not already exist.
+     *
+     * The table schema is based on the provided list of selected columns,
+     * and column types are mapped to their respective ClickHouse types.
+     *
+     * The table is created using the MergeTree engine with a default
+     * ORDER BY tuple().
+     *
+     * @param connection Active JDBC connection to ClickHouse
+     * @param tableName  Name of the table to be created
+     * @param columns    List of column metadata, including names and types
+     * @throws SQLException If table creation fails due to SQL error
+     */
+    public void createTable(Connection connection, String tableName, List<ColumnMetadata> columns) throws SQLException {
+
+        StringBuilder createTableQuery = new StringBuilder();
+        createTableQuery.append("CREATE TABLE IF NOT EXISTS ").append(tableName).append(" (");
+
+        boolean first = true;
+        for (ColumnMetadata column : columns) {
+            if (column.isSelected()) {
+                if (!first) {
+                    createTableQuery.append(", ");
+                }
+                createTableQuery.append("`").append(column.getName()).append("` ");
+
+                // Map CSV types to ClickHouse types
+                String clickHouseType = mapToClickHouseType(column.getType());
+                createTableQuery.append(clickHouseType);
+
+                first = false;
+            }
+        }
+
+        createTableQuery.append(") ENGINE = MergeTree() ORDER BY tuple()");
+
+        String query = createTableQuery.toString();
+        log.info("Creating table with query: {}", query);
+
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute(query);
+        }
+    }
+
+    /**
+     * Maps a generic or inferred data type to a corresponding ClickHouse data type.
+     *
+     * The mapping handles common data types such as:
+     * - Integer → Int64
+     * - Float, Double, or Decimal → Float64
+     * - Date or Time → DateTime
+     * - Boolean → UInt8
+     * - Any unknown or empty type → String
+     *
+     * @param genericType The inferred or provided generic data type
+     * @return The corresponding ClickHouse-compatible data type
+     */
+
+    private String mapToClickHouseType(String genericType) {
+        // Null or empty check
+        if (genericType == null || genericType.trim().isEmpty()) {
+            return "String";
+        }
+
+        // Normalize input
+        String lowerType = genericType.trim().toLowerCase();
+
+        // Type mapping
+        if (lowerType.contains("int")) {
+            return "Int64";
+        } else if (lowerType.contains("float") || lowerType.contains("double") || lowerType.contains("decimal")) {
+            return "Float64";
+        } else if (lowerType.contains("date") || lowerType.contains("time")) {
+            return "DateTime";
+        } else if (lowerType.contains("bool")) {
+            return "UInt8";
+        } else {
+            return "String"; // default mapping
+        }
+    }
+
+    /**
      * Inserts data into a ClickHouse table using batch processing.
      *
      * @param connection ClickHouse database connection
@@ -159,6 +241,7 @@ public class ClickHouseService {
      */
     public int insertData(Connection connection, String tableName, List<ColumnMetadata> columns,
             List<Map<String, Object>> data) throws SQLException {
+
         if (data.isEmpty()) {
             return 0;
         }
