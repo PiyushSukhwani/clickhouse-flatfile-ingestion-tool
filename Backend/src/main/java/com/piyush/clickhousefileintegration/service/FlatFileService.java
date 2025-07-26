@@ -1,12 +1,16 @@
 package com.piyush.clickhousefileintegration.service;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.io.Reader;
+import java.io.Writer;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -18,16 +22,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.csv.CSVRecord;
 import org.springframework.stereotype.Service;
 
@@ -147,12 +156,6 @@ public class FlatFileService {
 
         try (Reader reader = new BufferedReader(
                 new InputStreamReader(new FileInputStream(resolvedFilePath), Charset.forName(config.getEncoding())))) {
-            // Configure CSV parser based on the delimiter
-            // Deprecated
-            // CSVFormat csvFormat = CSVFormat.DEFAULT
-            // .withDelimiter(config.getDelimiter().charAt(0))
-            // .withHeader()
-            // .withSkipHeaderRecord(config.isHasHeader());
 
             CSVFormat.Builder builder = CSVFormat.Builder.create(CSVFormat.DEFAULT)
                     .setDelimiter(config.getDelimiter().charAt(0))
@@ -175,12 +178,11 @@ public class FlatFileService {
                     // Try to infer column types from the first record
                     if (csvParser.iterator().hasNext()) {
                         CSVRecord record = csvParser.iterator().next();
-                        int i = 0;
-                        for (String header : headerMap.keySet()) {
-                            String value = record.get(i);
+
+                        for (int j = 0; j < headerMap.size(); j++) {
+                            String value = record.get(j);
                             String inferredType = inferType(value);
-                            columns.get(i).setType(inferredType);
-                            i++;
+                            columns.get(j).setType(inferredType);
                         }
                     }
                 } else {
@@ -423,5 +425,90 @@ public class FlatFileService {
         }
 
         return row;
+    }
+
+    /**
+     * Creates a DataHandler for writing to a flat file.
+     *
+     * @param config  Flat file configuration
+     * @param columns List of columns to write
+     * @return DataHandler for writing to the flat file
+     */
+    public ClickHouseService.DataHandler createFlatFileDataHandler(FlatFileConfig config,
+            List<ColumnMetadata> columns) {
+
+        List<String> selectedColumnNames = Optional.ofNullable(columns)
+                .map(list -> list.stream()
+                        .filter(Objects::nonNull)
+                        .filter(ColumnMetadata::isSelected)
+                        .map(ColumnMetadata::getName)
+                        .filter(Objects::nonNull)
+                        .collect(Collectors.toList()))
+                .orElseGet(() -> {
+                    log.warn("Received null column list; no columns will be processed.");
+                    return Collections.emptyList();
+                });
+
+        return new ClickHouseService.DataHandler() {
+            private CSVPrinter csvPrinter;
+            private Writer writer;
+            private int recordCount = 0;
+
+            @Override
+            public void processRow(Map<String, Object> row) throws SQLException {
+                try {
+                    if (csvPrinter == null) {
+                        log.info("Initializing CSV printer with columns: {}", selectedColumnNames);
+
+                        writer = new BufferedWriter(
+                                new OutputStreamWriter(
+                                        new FileOutputStream(config.getFileName()),
+                                        StandardCharsets.UTF_8));
+
+                        CSVFormat format = CSVFormat.DEFAULT.builder()
+                                .setDelimiter(config.getDelimiter().charAt(0))
+                                .setHeader(selectedColumnNames.toArray(new String[0]))
+                                .build();
+
+                        csvPrinter = new CSVPrinter(writer, format);
+                    }
+
+                    log.debug("Processing row: {}", row);
+
+                    List<Object> recordValues = new ArrayList<>();
+                    for (String columnName : selectedColumnNames) {
+                        if (!row.containsKey(columnName)) {
+                            log.warn("Missing column '{}'; inserting NULL.", columnName);
+                        }
+                        recordValues.add(row.get(columnName));
+                    }
+
+                    csvPrinter.printRecord(recordValues);
+                    recordCount++;
+
+                    if (recordCount % 1000 == 0) {
+                        log.info("Written {} records to flat file", recordCount);
+                    }
+                } catch (IOException e) {
+                    throw new SQLException("Failed to write to flat file: " + e.getMessage(), e);
+                }
+            }
+
+            @Override
+            public void complete() throws SQLException {
+                try {
+                    if (csvPrinter != null) {
+                        csvPrinter.flush();
+                        csvPrinter.close();
+                    }
+                    if (writer != null) {
+                        writer.close();
+                    }
+                    log.info("Successfully completed writing {} records to flat file.", recordCount);
+                } catch (IOException e) {
+                    throw new SQLException("Failed to close flat file resources: " + e.getMessage(), e);
+                }
+            }
+        };
     }
 }
