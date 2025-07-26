@@ -295,4 +295,274 @@ public class ClickHouseService {
         }
     }
 
+    /**
+     * Executes a query with JOIN if multiple tables are selected.
+     *
+     * Pending Work:
+     * - Construct a separate list of selected column names for each table involved
+     * in the JOIN.
+     * - Build the SELECT clause by prefixing each column with its respective table
+     * name
+     * and assign a unique alias to prevent column name conflicts.
+     * Example:
+     * queryBuilder.append("sales_data.").append(col)
+     * .append(" AS sales_").append(col.toLowerCase()).append(", ");
+     * queryBuilder.append("transaction_data.").append(col)
+     * .append(" AS trans_").append(col.toLowerCase()).append(", ");
+     *
+     * - The final query should follow this structure:
+     * SELECT
+     * sales_data.TransactionID AS sales_transactionid,
+     * transaction_data.TransactionID AS trans_transactionid,
+     * ...
+     * FROM sales_data
+     * INNER JOIN transaction_data
+     * ON sales_data.ProductCategory = transaction_data.ProductCategory
+     * LIMIT 100;
+     *
+     * @param connection       ClickHouse connection
+     * @param mainTable        Main table name
+     * @param additionalTables Additional tables for JOIN
+     * @param joinCondition    JOIN condition
+     * @param columns          List of columns to fetch
+     * @param limit            Maximum number of rows to fetch
+     * @return List of maps representing rows of data
+     * @throws SQLException if query execution fails
+     */
+    public List<Map<String, Object>> previewJoinData(Connection connection, String mainTable,
+            List<String> additionalTables, String joinCondition,
+            List<ColumnMetadata> columns, int limit) throws SQLException {
+        List<Map<String, Object>> results = new ArrayList<>();
+
+        // Build column list for SELECT query
+        StringBuilder columnList = new StringBuilder();
+        for (ColumnMetadata column : columns) {
+            if (column.isSelected()) {
+                if (columnList.length() > 0) {
+                    columnList.append(", ");
+                }
+                columnList.append("`").append(column.getName()).append("`");
+            }
+        }
+
+        // If no columns selected, return empty result
+        if (columnList.length() == 0) {
+            return results;
+        }
+
+        // Build JOIN query
+        StringBuilder queryBuilder = new StringBuilder();
+        queryBuilder.append("SELECT ").append(columnList);
+        queryBuilder.append(" FROM ").append(mainTable);
+
+        // Add JOIN clauses
+        if (additionalTables != null && !additionalTables.isEmpty() && joinCondition != null
+                && !joinCondition.isEmpty()) {
+            for (String table : additionalTables) {
+                queryBuilder.append(" INNER JOIN ").append("(SELECT * FROM ").append(table)
+                        .append(") AS ").append(table);
+            }
+            queryBuilder.append(" ON ").append(joinCondition);
+        }
+
+        queryBuilder.append(" LIMIT ").append(limit);
+
+        String query = queryBuilder.toString();
+        log.info("Executing JOIN preview query: {}", query);
+
+        try (Statement stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(query)) {
+
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                for (int i = 1; i <= columnCount; i++) {
+                    String columnName = metaData.getColumnName(i);
+                    Object value = rs.getObject(i);
+                    row.put(columnName, value);
+                }
+                results.add(row);
+            }
+        }
+
+        return results;
+    }
+
+    /**
+     * Executes a query with JOIN if multiple tables are selected.
+     *
+     * Pending Work:
+     * - Construct a separate list of selected column names for each table involved
+     * in the JOIN.
+     * - Build the SELECT clause by prefixing each column with its respective table
+     * name
+     * and assign a unique alias to prevent column name conflicts.
+     * Example:
+     * queryBuilder.append("sales_data.").append(col)
+     * .append(" AS sales_").append(col.toLowerCase()).append(", ");
+     * queryBuilder.append("transaction_data.").append(col)
+     * .append(" AS trans_").append(col.toLowerCase()).append(", ");
+     *
+     * - The final query should follow this structure:
+     * SELECT
+     * sales_data.TransactionID AS sales_transactionid,
+     * transaction_data.TransactionID AS trans_transactionid,
+     * ...
+     * FROM sales_data
+     * INNER JOIN transaction_data
+     * ON sales_data.ProductCategory = transaction_data.ProductCategory
+     * LIMIT 100;
+     *
+     * @param connection       ClickHouse connection
+     * @param mainTable        Main table name
+     * @param additionalTables Additional tables for JOIN
+     * @param joinCondition    JOIN condition
+     * @param columns          List of columns to transfer
+     * @param handler          DataHandler to process each row
+     * @return Number of records processed
+     * @throws SQLException if query execution fails
+     */
+    public int transferJoinDataFromClickHouse(Connection connection, String mainTable,
+            List<String> additionalTables, String joinCondition,
+            List<ColumnMetadata> columns, DataHandler handler) throws SQLException {
+        int recordCount = 0;
+
+        // Build column list for SELECT query
+        StringBuilder columnList = new StringBuilder();
+        for (ColumnMetadata column : columns) {
+            if (column.isSelected()) {
+                if (columnList.length() > 0) {
+                    columnList.append(", ");
+                }
+                columnList.append("`").append(column.getName()).append("`");
+            }
+        }
+
+        // If no columns selected, return 0
+        if (columnList.length() == 0) {
+            return 0;
+        }
+
+        // Build JOIN query
+        StringBuilder queryBuilder = new StringBuilder();
+        queryBuilder.append("SELECT ").append(columnList);
+        queryBuilder.append(" FROM ").append(mainTable);
+
+        // Add JOIN clauses
+        if (additionalTables != null && !additionalTables.isEmpty() && joinCondition != null
+                && !joinCondition.isEmpty()) {
+            // for (String table : additionalTables) {
+            // queryBuilder.append(" JOIN ").append(table);
+            // }
+            // queryBuilder.append(" ON ").append(joinCondition);
+            // Join the first additional table only
+            String joinTable = additionalTables.get(0);
+            queryBuilder.append(" JOIN ").append(joinTable);
+            queryBuilder.append(" ON ").append(joinCondition);
+        }
+
+        String query = queryBuilder.toString();
+        log.info("Executing JOIN transfer query: {}", query);
+
+        try (Statement stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(query)) {
+
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+
+            // Process each row
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                for (int i = 1; i <= columnCount; i++) {
+                    String columnName = metaData.getColumnName(i);
+                    Object value = rs.getObject(i);
+                    row.put(columnName, value);
+                }
+
+                handler.processRow(row);
+                recordCount++;
+
+                // Log progress every 1000 records
+                if (recordCount % 1000 == 0) {
+                    log.info("Processed {} records", recordCount);
+                }
+            }
+        }
+
+        handler.complete();
+        return recordCount;
+    }
+
+    /**
+     * Transfers data from ClickHouse to a target handler
+     *
+     * @param connection ClickHouse connection
+     * @param tableName  Source table name
+     * @param columns    List of columns to transfer
+     * @param handler    DataHandler to process each row
+     * @return Number of records processed
+     * @throws SQLException if query fails
+     */
+    public int transferDataFromClickHouse(Connection connection, String tableName,
+            List<ColumnMetadata> columns, DataHandler handler) throws SQLException {
+        int recordCount = 0;
+
+        // Build column list for SELECT query
+        StringBuilder columnList = new StringBuilder();
+        for (ColumnMetadata column : columns) {
+            if (column.isSelected()) {
+                if (columnList.length() > 0) {
+                    columnList.append(", ");
+                }
+                columnList.append("`").append(column.getName()).append("`");
+            }
+        }
+
+        // If no columns selected, return 0
+        if (columnList.length() == 0) {
+            return 0;
+        }
+
+        String query = String.format("SELECT %s FROM %s", columnList, tableName);
+        log.info("Executing transfer query: {}", query);
+
+        try (Statement stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(query)) {
+
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+
+            // Process each row
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                for (int i = 1; i <= columnCount; i++) {
+                    String columnName = metaData.getColumnName(i);
+                    Object value = rs.getObject(i);
+                    row.put(columnName, value);
+                }
+
+                handler.processRow(row);
+                recordCount++;
+
+                // Log progress every 1000 records
+                if (recordCount % 1000 == 0) {
+                    log.info("Processed {} records", recordCount);
+                }
+            }
+        }
+
+        handler.complete();
+        return recordCount;
+    }
+
+    /**
+     * Interface for handling data rows during transfer
+     */
+    public interface DataHandler {
+        void processRow(Map<String, Object> row) throws SQLException;
+
+        void complete() throws SQLException;
+    }
 }

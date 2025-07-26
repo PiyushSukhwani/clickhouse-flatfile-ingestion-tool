@@ -5,6 +5,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import org.springframework.stereotype.Service;
 
@@ -98,6 +99,27 @@ public class IntegrationService {
     }
 
     /**
+     * Previews data from ClickHouse with JOIN
+     *
+     * @param config           ClickHouse configuration
+     * @param mainTable        Main table name
+     * @param additionalTables Additional tables for JOIN
+     * @param joinCondition    JOIN condition
+     * @param columns          List of columns to preview
+     * @param limit            Maximum number of rows to preview
+     * @return List of data rows
+     * @throws SQLException if database operation fails
+     */
+    public List<Map<String, Object>> previewClickHouseJoinData(ClickHouseConfig config, String mainTable,
+            List<String> additionalTables, String joinCondition,
+            List<ColumnMetadata> columns, int limit) throws SQLException {
+        try (Connection connection = clickHouseService.connect(config)) {
+            return clickHouseService.previewJoinData(connection, mainTable, additionalTables, joinCondition, columns,
+                    limit);
+        }
+    }
+
+    /**
      * Ingests data from a flat file into a ClickHouse table.
      *
      * The method performs the following steps:
@@ -138,4 +160,5 @@ public class IntegrationService {
         }
     }
 
+    
 }

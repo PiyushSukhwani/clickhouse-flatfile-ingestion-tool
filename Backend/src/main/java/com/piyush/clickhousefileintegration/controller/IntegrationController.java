@@ -103,13 +103,13 @@ public class IntegrationController {
             if (request.getAdditionalTables() != null && !request.getAdditionalTables().isEmpty() &&
                     request.getJoinCondition() != null && !request.getJoinCondition().isEmpty()) {
                 // Use JOIN preview if multiple tables are selected
-                // data = integrationService.previewClickHouseJoinData(
-                //         request.getClickHouseConfig(),
-                //         request.getTableName(),
-                //         request.getAdditionalTables(),
-                //         request.getJoinCondition(),
-                //         request.getSelectedColumns(),
-                //         100); // Preview limit
+                data = integrationService.previewClickHouseJoinData(
+                request.getClickHouseConfig(),
+                request.getTableName(),
+                request.getAdditionalTables(),
+                request.getJoinCondition(),
+                request.getSelectedColumns(),
+                100); // Preview limit
             } else {
                 // Use simple preview for single table
                 data = integrationService.previewClickHouseData(
@@ -154,7 +154,8 @@ public class IntegrationController {
     /**
      * Previews data from a flat file
      *
-     * @param request Ingestion request with source configuration and column selection
+     * @param request Ingestion request with source configuration and column
+     *                selection
      * @return Preview data
      */
     @PostMapping("/flatfile/preview")
@@ -164,12 +165,12 @@ public class IntegrationController {
             // Log the request for debugging
             log.info("Received preview request for flat file: {}", request.getFlatFileConfig());
             log.info("Selected columns: {}", request.getSelectedColumns());
-            
+
             List<Map<String, Object>> data = integrationService.previewFlatFileData(
                     request.getFlatFileConfig(),
                     request.getSelectedColumns(),
                     100); // Preview limit
-            
+
             response.put("success", true);
             response.put("data", data);
             return ResponseEntity.ok(response);
@@ -180,4 +181,5 @@ public class IntegrationController {
             return ResponseEntity.badRequest().body(response);
         }
     }
+
 }
