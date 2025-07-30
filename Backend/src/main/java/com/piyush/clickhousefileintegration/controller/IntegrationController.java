@@ -182,4 +182,27 @@ public class IntegrationController {
         }
     }
 
+    /**
+     * Executes the data ingestion process
+     *
+     * @param request Ingestion request with source, target, and column selection
+     * @return Ingestion result with record count
+     */
+    @PostMapping("/execute")
+    public ResponseEntity<Map<String, Object>> executeIngestion(@RequestBody IngestionRequest request) {
+        Map<String, Object> response = new HashMap<>();
+
+        try {
+            int recordCount = integrationService.executeIngestion(request);
+            response.put("success", true);
+            response.put("recordCount", recordCount);
+            response.put("message", "Ingestion completed successfully");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Error executing ingestion", e);
+            response.put("success", false);
+            response.put("message", "Ingestion failed: " + e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        }
+    }
 }
