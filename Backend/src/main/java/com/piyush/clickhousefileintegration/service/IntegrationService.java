@@ -160,5 +160,122 @@ public class IntegrationService {
         }
     }
 
-    
+    /**
+     * Executes the ingestion process between source and target based on the given
+     * request.
+     *
+     * @param request the ingestion request containing source, target, and selected
+     *                columns
+     * @return the number of records processed
+     * @throws Exception if the ingestion process fails
+     */
+    public int executeIngestion(IngestionRequest request) throws Exception {
+        log.info("Initiating ingestion: Source [{}], Target [{}]", request.getSourceType(), request.getTargetType());
+
+        validateRequest(request);
+
+        String source = request.getSourceType().toLowerCase();
+        String target = request.getTargetType().toLowerCase();
+
+        if ("clickhouse".equals(source) && "flatfile".equals(target)) {
+            return ingestFromClickHouseToFlatFile(request);
+        } else if ("flatfile".equals(source) && "clickhouse".equals(target)) {
+            return ingestFromFlatFileToClickHouse(request);
+        } else {
+            throw new IllegalArgumentException(String.format(
+                    "Ingestion from [%s] to [%s] is not supported", request.getSourceType(), request.getTargetType()));
+        }
+    }
+
+    /**
+     * Validates the ingestion request for completeness and correctness.
+     *
+     * @param request the ingestion request to be validated
+     * @throws IllegalArgumentException if the request contains invalid or missing
+     *                                  fields
+     */
+    private void validateRequest(IngestionRequest request) {
+        if (request.getSourceType() == null || request.getTargetType() == null) {
+            throw new IllegalArgumentException("Both sourceType and targetType must be specified");
+        }
+
+        switch (request.getSourceType().toLowerCase()) {
+            case "clickhouse":
+                if (request.getClickHouseConfig() == null) {
+                    throw new IllegalArgumentException("ClickHouse configuration must be provided as the source");
+                }
+                break;
+            case "flatfile":
+                if (request.getFlatFileConfig() == null) {
+                    throw new IllegalArgumentException("FlatFile configuration must be provided as the source");
+                }
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported sourceType: " + request.getSourceType());
+        }
+
+        switch (request.getTargetType().toLowerCase()) {
+            case "clickhouse":
+                if (request.getClickHouseConfig() == null) {
+                    throw new IllegalArgumentException("ClickHouse configuration must be provided as the target");
+                }
+                break;
+            case "flatfile":
+                if (request.getFlatFileConfig() == null) {
+                    throw new IllegalArgumentException("FlatFile configuration must be provided as the target");
+                }
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported targetType: " + request.getTargetType());
+        }
+
+        if (request.getSelectedColumns() == null || request.getSelectedColumns().isEmpty()) {
+            throw new IllegalArgumentException("At least one column must be selected for ingestion");
+        }
+    }
+
+    /**
+     * Performs data ingestion from ClickHouse to a flat file.
+     *
+     * @param request the ingestion request containing source and destination
+     *                configurations
+     * @return the total number of records successfully processed
+     * @throws SQLException if an error occurs during ClickHouse database operations
+     * @throws IOException  if an error occurs during file writing operations
+     */
+    private int ingestFromClickHouseToFlatFile(IngestionRequest request) throws SQLException, IOException {
+        Objects.requireNonNull(request, "Ingestion request must not be null");
+        log.info("Initiating data ingestion from ClickHouse to Flat File...");
+
+        try (Connection connection = clickHouseService.connect(request.getClickHouseConfig())) {
+            ClickHouseService.DataHandler flatFileHandler = flatFileService
+                    .createFlatFileDataHandler(request.getFlatFileConfig(), request.getSelectedColumns());
+
+            int recordCount;
+            boolean isJoinRequired = request.getAdditionalTables() != null && !request.getAdditionalTables().isEmpty()
+                    && request.getJoinCondition() != null && !request.getJoinCondition().isEmpty();
+
+            if (isJoinRequired) {
+                log.info("Executing JOIN-based ingestion with additional tables: {}", request.getAdditionalTables());
+                recordCount = clickHouseService.transferJoinDataFromClickHouse(
+                        connection,
+                        request.getTableName(),
+                        request.getAdditionalTables(),
+                        request.getJoinCondition(),
+                        request.getSelectedColumns(),
+                        flatFileHandler);
+            } else {
+                log.info("Executing simple ingestion for table: {}", request.getTableName());
+                recordCount = clickHouseService.transferDataFromClickHouse(
+                        connection,
+                        request.getTableName(),
+                        request.getSelectedColumns(),
+                        flatFileHandler);
+            }
+
+            log.info("Ingestion completed successfully. Total records transferred: {}", recordCount);
+            return recordCount;
+        }
+    }
+
 }
