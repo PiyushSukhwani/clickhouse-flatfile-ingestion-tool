@@ -1,16 +1,8 @@
-// interface Column {
-//   name: string;
-//   selected: boolean;
-// }
+const DataPreview = ({ data, visible, formDataRef }) => {
+  const selectedColumns = JSON.parse(
+    formDataRef.current.get("selectedColumns") || "[]"
+  )?.filter((col) => col.selected);
 
-// interface DataPreviewProps {
-//   data: any[];
-//   columns: Column[];
-//   visible: boolean;
-// }
-
-const DataPreview = ({ data, columns, visible }) => {
-  const selectedColumns = columns.filter((col) => col.selected);
   const previewRows = data.slice(0, 100);
 
   return (
@@ -37,7 +29,7 @@ const DataPreview = ({ data, columns, visible }) => {
                       <th
                         key={idx}
                         className={`px-3 py-2 border-b text-[20px] text-left font-semibold border-gray-300 ${
-                          idx !== columns.length - 1 ? "border-r " : ""
+                          idx !== selectedColumns.length - 1 ? "border-r " : ""
                         }`}
                       >
                         {col.name}
@@ -52,7 +44,7 @@ const DataPreview = ({ data, columns, visible }) => {
                         <td
                           key={j}
                           className={`px-3 py-2 text-[17px] text-gray-800 border-b border-gray-300 ${
-                            j !== columns.length - 1 ? "border-r " : ""
+                            j !== selectedColumns.length - 1 ? "border-r " : ""
                           }`}
                         >
                           {row[col.name] ?? ""}
