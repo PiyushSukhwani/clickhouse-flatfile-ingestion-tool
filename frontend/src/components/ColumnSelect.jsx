@@ -1,7 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { fetchClickhousePreviewData } from "../services/clickhouseService";
+import { fetchFlatFilePreviewData } from "../services/flatFileService";
 
-const ColumnSelectionSection = ({ columns, formDataRef, setPreviewData }) => {
+const ColumnSelectionSection = ({
+  columns,
+  formDataRef,
+  setPreviewData,
+  source,
+  setPreviewDataMessage,
+}) => {
   const [columnsState, setColumnsState] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -31,20 +38,31 @@ const ColumnSelectionSection = ({ columns, formDataRef, setPreviewData }) => {
   };
 
   const handleFetchData = async () => {
-    const fd = formDataRef.current;
-
-    const previewRequest = {
-      clickHouseConfig: JSON.parse(fd.get("clickhouseConfig") || "{}"),
-      tableName: fd.get("tableName") || "",
-      selectedColumns: columnsState,
-    };
-
     setLoading(true);
+    setPreviewDataMessage("");
+
     try {
-      const res = await fetchClickhousePreviewData(previewRequest);
+      let res;
+
+      if (source === "clickhouse") {
+        const fd = formDataRef.current;
+        const previewRequest = {
+          clickHouseConfig: JSON.parse(fd.get("clickhouseConfig") || "{}"),
+          tableName: fd.get("tableName") || "",
+          selectedColumns: columnsState,
+        };
+
+        res = await fetchClickhousePreviewData(previewRequest);
+      } else {
+        res = await fetchFlatFilePreviewData(formDataRef);
+      }
+
       setPreviewData(res.data);
-      console.log(res);
+      res.data.length > 0
+        ? setPreviewDataMessage("")
+        : setPreviewDataMessage("No data available for preview");
     } catch (error) {
+      setPreviewDataMessage(error.response.data.message);
       console.error(error);
     } finally {
       setLoading(false);

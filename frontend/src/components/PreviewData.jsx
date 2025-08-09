@@ -1,4 +1,4 @@
-const DataPreview = ({ data, visible, formDataRef }) => {
+const DataPreview = ({ data, visible, formDataRef, previewDataMessage }) => {
   const selectedColumns = JSON.parse(
     formDataRef.current.get("selectedColumns") || "[]"
   )?.filter((col) => col.selected);
@@ -17,7 +17,7 @@ const DataPreview = ({ data, visible, formDataRef }) => {
       <div className="p-4">
         {!data || data.length === 0 ? (
           <div className="text-yellow-700 bg-yellow-100 border border-yellow-300 px-4 py-2 rounded">
-            No data available for preview
+            {previewDataMessage}
           </div>
         ) : (
           <>
