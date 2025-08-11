@@ -1,13 +1,16 @@
 package com.piyush.clickhousefileintegration.service;
 
+import java.io.File;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.piyush.clickhousefileintegration.model.ClickHouseConfig;
 import com.piyush.clickhousefileintegration.model.ColumnMetadata;
@@ -79,8 +82,9 @@ public class IntegrationService {
      * @throws IOException          if file operation fails
      * @throws InterruptedException
      */
-    public List<ColumnMetadata> getFlatFileSchema(FlatFileConfig config) throws IOException, InterruptedException {
-        return flatFileService.readFileSchema(config);
+    public List<ColumnMetadata> getFlatFileSchema(FlatFileConfig config, MultipartFile file)
+            throws IOException, InterruptedException {
+        return flatFileService.readFileSchema(config, file);
     }
 
     /**
@@ -93,9 +97,10 @@ public class IntegrationService {
      * @throws IOException          if file operation fails
      * @throws InterruptedException
      */
-    public List<Map<String, Object>> previewFlatFileData(FlatFileConfig config, List<ColumnMetadata> columns,
+    public List<Map<String, Object>> previewFlatFileData(FlatFileConfig config, MultipartFile file,
+            List<ColumnMetadata> columns,
             int limit) throws IOException, InterruptedException {
-        return flatFileService.readData(config, columns, limit);
+        return flatFileService.readData(config, file, columns, limit);
     }
 
     /**
@@ -134,7 +139,7 @@ public class IntegrationService {
      * @throws SQLException If a database error occurs during the process
      * @throws IOException  If a file I/O error occurs while reading the flat file
      */
-    private int ingestFromFlatFileToClickHouse(IngestionRequest request)
+    public int ingestFromFlatFileToClickHouse(IngestionRequest request, MultipartFile file)
             throws SQLException, IOException, InterruptedException {
         log.info("Ingesting data from Flat File to ClickHouse");
 
@@ -145,6 +150,7 @@ public class IntegrationService {
             // Read data from flat file
             List<Map<String, Object>> data = flatFileService.readData(
                     request.getFlatFileConfig(),
+                    file,
                     request.getSelectedColumns(),
                     0); // No limit for full ingestion
 
@@ -169,23 +175,23 @@ public class IntegrationService {
      * @return the number of records processed
      * @throws Exception if the ingestion process fails
      */
-    public int executeIngestion(IngestionRequest request) throws Exception {
-        log.info("Initiating ingestion: Source [{}], Target [{}]", request.getSourceType(), request.getTargetType());
+    // public int executeIngestion(IngestionRequest request, MultipartFile file) throws Exception {
+    //     log.info("Initiating ingestion: Source [{}], Target [{}]", request.getSourceType(), request.getTargetType());
 
-        validateRequest(request);
+    //     validateRequest(request);
 
-        String source = request.getSourceType().toLowerCase();
-        String target = request.getTargetType().toLowerCase();
+    //     String source = request.getSourceType().toLowerCase();
+    //     String target = request.getTargetType().toLowerCase();
 
-        if ("clickhouse".equals(source) && "flatfile".equals(target)) {
-            return ingestFromClickHouseToFlatFile(request);
-        } else if ("flatfile".equals(source) && "clickhouse".equals(target)) {
-            return ingestFromFlatFileToClickHouse(request);
-        } else {
-            throw new IllegalArgumentException(String.format(
-                    "Ingestion from [%s] to [%s] is not supported", request.getSourceType(), request.getTargetType()));
-        }
-    }
+    //     if ("clickhouse".equals(source) && "flatfile".equals(target)) {
+    //         return ingestFromClickHouseToFlatFile(request);
+    //     } else if ("flatfile".equals(source) && "clickhouse".equals(target)) {
+    //         return ingestFromFlatFileToClickHouse(request, file);
+    //     } else {
+    //         throw new IllegalArgumentException(String.format(
+    //                 "Ingestion from [%s] to [%s] is not supported", request.getSourceType(), request.getTargetType()));
+    //     }
+    // }
 
     /**
      * Validates the ingestion request for completeness and correctness.
@@ -194,7 +200,7 @@ public class IntegrationService {
      * @throws IllegalArgumentException if the request contains invalid or missing
      *                                  fields
      */
-    private void validateRequest(IngestionRequest request) {
+    public void validateRequest(IngestionRequest request) {
         if (request.getSourceType() == null || request.getTargetType() == null) {
             throw new IllegalArgumentException("Both sourceType and targetType must be specified");
         }
@@ -243,13 +249,15 @@ public class IntegrationService {
      * @throws SQLException if an error occurs during ClickHouse database operations
      * @throws IOException  if an error occurs during file writing operations
      */
-    private int ingestFromClickHouseToFlatFile(IngestionRequest request) throws SQLException, IOException {
-        Objects.requireNonNull(request, "Ingestion request must not be null");
+    public int ingestFromClickHouseToFlatFile(IngestionRequest request, AtomicReference<File> generatedFileRef)
+            throws SQLException, IOException {
         log.info("Initiating data ingestion from ClickHouse to Flat File...");
 
         try (Connection connection = clickHouseService.connect(request.getClickHouseConfig())) {
             ClickHouseService.DataHandler flatFileHandler = flatFileService
-                    .createFlatFileDataHandler(request.getFlatFileConfig(), request.getSelectedColumns());
+                    .createFlatFileDataHandler(request.getFlatFileConfig(), request.getSelectedColumns(),
+                            generatedFileRef,
+                            request.getTableName());
 
             int recordCount;
             boolean isJoinRequired = request.getAdditionalTables() != null && !request.getAdditionalTables().isEmpty()

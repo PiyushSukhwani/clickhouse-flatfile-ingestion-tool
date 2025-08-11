@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import org.apache.commons.csv.CSVFormat;
@@ -39,6 +40,7 @@ import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.csv.CSVRecord;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.piyush.clickhousefileintegration.model.ColumnMetadata;
 import com.piyush.clickhousefileintegration.model.FlatFileConfig;
@@ -134,67 +136,63 @@ public class FlatFileService {
      * @throws IOException          if file reading fails
      * @throws InterruptedException
      */
-    public List<ColumnMetadata> readFileSchema(FlatFileConfig config) throws IOException, InterruptedException {
+    public List<ColumnMetadata> readFileSchema(FlatFileConfig config, MultipartFile file)
+            throws IOException, InterruptedException {
+        // validateConfig(config);
+
+        try (Reader reader = createReader(config, file)) {
+            CSVFormat csvFormat = buildCsvFormat(config);
+            return parseColumns(reader, csvFormat, config.isHasHeader());
+        }
+    }
+
+    private Reader createReader(FlatFileConfig config, MultipartFile file) throws IOException, InterruptedException {
+        if (file != null && !file.isEmpty()) {
+            log.info("Reading file directly from uploaded MultipartFile: {}", file.getOriginalFilename());
+            return new BufferedReader(
+                    new InputStreamReader(file.getInputStream(), Charset.forName(config.getEncoding())));
+        } else {
+            String resolvedPath = resolveFilePathOrUrl(config.getFileName());
+            log.info("Reading file from resolved path/URL: {}", resolvedPath);
+            return new BufferedReader(
+                    new InputStreamReader(new FileInputStream(resolvedPath), Charset.forName(config.getEncoding())));
+        }
+    }
+
+    private CSVFormat buildCsvFormat(FlatFileConfig config) {
+        CSVFormat.Builder builder = CSVFormat.Builder.create(CSVFormat.DEFAULT)
+                .setDelimiter(config.getDelimiter().charAt(0))
+                .setSkipHeaderRecord(config.isHasHeader());
+
+        if (config.isHasHeader()) {
+            builder.setHeader(); // Auto-detect header from file
+        }
+        return builder.build();
+    }
+
+    private List<ColumnMetadata> parseColumns(Reader reader, CSVFormat csvFormat, boolean hasHeader)
+            throws IOException {
         List<ColumnMetadata> columns = new ArrayList<>();
 
-        // Check if config is null
-        if (config == null) {
-            log.error("FlatFileConfig is null");
-            throw new IOException("FlatFileConfig cannot be null");
-        }
+        try (CSVParser csvParser = new CSVParser(reader, csvFormat)) {
+            if (hasHeader) {
+                Map<String, Integer> headerMap = csvParser.getHeaderMap();
+                for (String header : headerMap.keySet()) {
+                    columns.add(new ColumnMetadata(header, ""));
+                }
 
-        // Check if fileName is null
-        if (config.getFileName() == null) {
-            log.error("File name is null in FlatFileConfig");
-            throw new IOException("File name cannot be null");
-        }
-
-        log.info("Attempting to resolve file path: {}", config.getFileName());
-
-        // Resolve file path or URL
-        String resolvedFilePath = resolveFilePathOrUrl(config.getFileName());
-
-        try (Reader reader = new BufferedReader(
-                new InputStreamReader(new FileInputStream(resolvedFilePath), Charset.forName(config.getEncoding())))) {
-
-            CSVFormat.Builder builder = CSVFormat.Builder.create(CSVFormat.DEFAULT)
-                    .setDelimiter(config.getDelimiter().charAt(0))
-                    .setSkipHeaderRecord(config.isHasHeader());
-
-            if (config.isHasHeader()) {
-                builder.setHeader(); // Auto-detect from file
-            }
-
-            CSVFormat csvFormat = builder.build();
-
-            try (CSVParser csvParser = new CSVParser(reader, csvFormat)) {
-                // If file has header, use it for column names
-                if (config.isHasHeader()) {
-                    Map<String, Integer> headerMap = csvParser.getHeaderMap();
-                    for (String header : headerMap.keySet()) {
-                        columns.add(new ColumnMetadata(header, ""));
+                if (csvParser.iterator().hasNext()) {
+                    CSVRecord record = csvParser.iterator().next();
+                    for (int j = 0; j < headerMap.size(); j++) {
+                        String value = record.get(j);
+                        columns.get(j).setType(inferType(value));
                     }
-
-                    // Try to infer column types from the first record
-                    if (csvParser.iterator().hasNext()) {
-                        CSVRecord record = csvParser.iterator().next();
-
-                        for (int j = 0; j < headerMap.size(); j++) {
-                            String value = record.get(j);
-                            String inferredType = inferType(value);
-                            columns.get(j).setType(inferredType);
-                        }
-                    }
-                } else {
-                    // If no header, create generic column names
-                    if (csvParser.iterator().hasNext()) {
-                        CSVRecord record = csvParser.iterator().next();
-                        for (int i = 0; i < record.size(); i++) {
-                            String columnName = "Column_" + (i + 1);
-                            String value = record.get(i);
-                            String inferredType = inferType(value);
-                            columns.add(new ColumnMetadata(columnName, inferredType));
-                        }
+                }
+            } else {
+                if (csvParser.iterator().hasNext()) {
+                    CSVRecord record = csvParser.iterator().next();
+                    for (int i = 0; i < record.size(); i++) {
+                        columns.add(new ColumnMetadata("Column_" + (i + 1), inferType(record.get(i))));
                     }
                 }
             }
@@ -259,14 +257,17 @@ public class FlatFileService {
      * @throws IOException          if file reading fails
      * @throws InterruptedException
      */
-    public List<Map<String, Object>> readData(FlatFileConfig config, List<ColumnMetadata> columns, int limit)
+    public List<Map<String, Object>> readData(FlatFileConfig config,
+            MultipartFile file,
+            List<ColumnMetadata> columns,
+            int limit)
             throws IOException, InterruptedException {
+
         List<Map<String, Object>> results = new ArrayList<>();
 
-        // Validate config and file name
-        if (config == null || config.getFileName() == null) {
-            log.error("Invalid flat file config: {}", config);
-            throw new IOException("File name cannot be null");
+        // Validate config
+        if (config == null) {
+            throw new IOException("FlatFileConfig cannot be null");
         }
 
         // Validate columns
@@ -275,47 +276,32 @@ public class FlatFileService {
             return results;
         }
 
-        // Resolve file path or URL
-        String resolvedFilePath = resolveFilePathOrUrl(config.getFileName());
-        log.info("Resolved file path: {}", resolvedFilePath);
-
         // Get selected column names
         List<String> selectedColumnNames = getSelectedColumnNames(columns);
-
         if (selectedColumnNames.isEmpty()) {
             log.warn("No valid columns available to preview after selection");
             return results;
         }
 
-        log.info("Reading data from file: {}", resolvedFilePath);
-        log.info("Selected columns for preview: {}", selectedColumnNames);
+        // Determine file input source
+        Reader reader = createReader(config, file);
 
-        Charset encoding = (config.getEncoding() != null && !config.getEncoding().isEmpty())
-                ? Charset.forName(config.getEncoding())
-                : StandardCharsets.UTF_8;
-        char delimiter = (config.getDelimiter() != null && !config.getDelimiter().isEmpty())
-                ? config.getDelimiter().charAt(0)
-                : ',';
-        // Configure CSV parser based on the delimiter
         CSVFormat csvFormat = CSVFormat.DEFAULT.builder()
                 .setHeader()
                 .setSkipHeaderRecord(config.isHasHeader())
                 .setIgnoreHeaderCase(true)
                 .setAllowMissingColumnNames(true)
-                .setDelimiter(delimiter)
+                .setDelimiter(config.getDelimiter().charAt(0))
                 .build();
 
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(new FileInputStream(resolvedFilePath), encoding));
-                CSVParser csvParser = new CSVParser(reader, csvFormat)) {
+        try (CSVParser csvParser = new CSVParser(reader, csvFormat)) {
             int rowCount = 0;
             Map<String, Integer> headerMap = csvParser.getHeaderMap();
             log.info("CSV header map: {}", headerMap);
 
             for (CSVRecord record : csvParser) {
-                if (limit > 0 && rowCount >= limit) {
+                if (limit > 0 && rowCount >= limit)
                     break;
-                }
 
                 Map<String, Object> row = config.isHasHeader()
                         ? readRowUsingHeader(record, selectedColumnNames, headerMap)
@@ -329,10 +315,7 @@ public class FlatFileService {
 
         } catch (Exception e) {
             log.error("Error reading data from file: {}", e.getMessage(), e);
-            log.error("File path: {}, Delimiter: '{}', Has Header: {}, Encoding: {}",
-                    resolvedFilePath, delimiter, config.isHasHeader(), config.getEncoding());
-            log.error("Selected columns: {}", selectedColumnNames);
-            throw new IOException("Error reading data from file: " + e.getMessage(), e);
+            throw new IOException("Error reading data from file: " + e.getMessage());
         }
 
         return results;
@@ -435,7 +418,7 @@ public class FlatFileService {
      * @return DataHandler for writing to the flat file
      */
     public ClickHouseService.DataHandler createFlatFileDataHandler(FlatFileConfig config,
-            List<ColumnMetadata> columns) {
+            List<ColumnMetadata> columns, AtomicReference<File> generatedFileRef, String tableName) {
 
         List<String> selectedColumnNames = Optional.ofNullable(columns)
                 .map(list -> list.stream()
@@ -460,9 +443,13 @@ public class FlatFileService {
                     if (csvPrinter == null) {
                         log.info("Initializing CSV printer with columns: {}", selectedColumnNames);
 
+                        // ✅ Create a temp file with tableName.csv
+                        File tempFile = File.createTempFile(tableName, ".csv");
+                        generatedFileRef.set(tempFile);
+
                         writer = new BufferedWriter(
                                 new OutputStreamWriter(
-                                        new FileOutputStream(config.getFileName()),
+                                        new FileOutputStream(tempFile),
                                         StandardCharsets.UTF_8));
 
                         CSVFormat format = CSVFormat.DEFAULT.builder()

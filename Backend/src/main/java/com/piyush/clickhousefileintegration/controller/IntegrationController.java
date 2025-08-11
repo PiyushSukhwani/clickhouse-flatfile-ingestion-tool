@@ -2,7 +2,10 @@ package com.piyush.clickhousefileintegration.controller;
 
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.piyush.clickhousefileintegration.model.ClickHouseConfig;
 import com.piyush.clickhousefileintegration.model.ColumnMetadata;
@@ -13,12 +16,21 @@ import com.piyush.clickhousefileintegration.service.IntegrationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
@@ -26,6 +38,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 @RequestMapping("/api/integration")
 @RequiredArgsConstructor
 @Slf4j
+@CrossOrigin(origins = "http://localhost:5173/")
 public class IntegrationController {
 
     private final IntegrationService integrationService;
@@ -104,12 +117,12 @@ public class IntegrationController {
                     request.getJoinCondition() != null && !request.getJoinCondition().isEmpty()) {
                 // Use JOIN preview if multiple tables are selected
                 data = integrationService.previewClickHouseJoinData(
-                request.getClickHouseConfig(),
-                request.getTableName(),
-                request.getAdditionalTables(),
-                request.getJoinCondition(),
-                request.getSelectedColumns(),
-                100); // Preview limit
+                        request.getClickHouseConfig(),
+                        request.getTableName(),
+                        request.getAdditionalTables(),
+                        request.getJoinCondition(),
+                        request.getSelectedColumns(),
+                        100); // Preview limit
             } else {
                 // Use simple preview for single table
                 data = integrationService.previewClickHouseData(
@@ -134,20 +147,33 @@ public class IntegrationController {
      *
      * @param config Flat file configuration
      * @return List of column metadata
+     * @throws Exception
      */
-    @PostMapping("/flatfile/schema")
-    public ResponseEntity<Map<String, Object>> getFlatFileSchema(@RequestBody FlatFileConfig config) {
+    @PostMapping(value = "/flatfile/schema", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> getFlatFileSchema(
+            @RequestPart("flatFileConfig") FlatFileConfig config,
+            @RequestPart(value = "file", required = false) MultipartFile file) {
+
+        boolean hasFileUrl = config.getFileName() != null && !config.getFileName().isEmpty();
+        boolean hasFile = file != null && !file.isEmpty();
+
+        if (!hasFileUrl && !hasFile) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Either a file URL (fileName) or an uploaded file must be provided.");
+        }
         Map<String, Object> response = new HashMap<>();
         try {
-            List<ColumnMetadata> columns = integrationService.getFlatFileSchema(config);
+            List<ColumnMetadata> columns = integrationService.getFlatFileSchema(config, file);
             response.put("success", true);
             response.put("columns", columns);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Error getting flat file schema", e);
-            response.put("success", false);
-            response.put("message", "Failed to get schema: " + e.getMessage());
-            return ResponseEntity.badRequest().body(response);
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Failed to preview data: " + e.getMessage(),
+                    e);
         }
     }
 
@@ -158,9 +184,21 @@ public class IntegrationController {
      *                selection
      * @return Preview data
      */
-    @PostMapping("/flatfile/preview")
-    public ResponseEntity<Map<String, Object>> previewFlatFileData(@RequestBody IngestionRequest request) {
-        Map<String, Object> response = new HashMap<>();
+    @PostMapping(value = "/flatfile/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> previewFlatFileData(
+            @RequestPart("ingestionRequest") IngestionRequest request,
+            @RequestPart(value = "file", required = false) MultipartFile file) {
+
+        boolean hasFileUrl = request.getFlatFileConfig().getFileName() != null
+                && !request.getFlatFileConfig().getFileName().isEmpty();
+        boolean hasFile = file != null && !file.isEmpty();
+
+        if (!hasFileUrl && !hasFile) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Either a file URL (fileName) or an uploaded file must be provided.");
+        }
+
         try {
             // Log the request for debugging
             log.info("Received preview request for flat file: {}", request.getFlatFileConfig());
@@ -168,17 +206,22 @@ public class IntegrationController {
 
             List<Map<String, Object>> data = integrationService.previewFlatFileData(
                     request.getFlatFileConfig(),
+                    file,
                     request.getSelectedColumns(),
-                    100); // Preview limit
+                    100 // Preview limit
+            );
 
+            Map<String, Object> response = new HashMap<>();
             response.put("success", true);
             response.put("data", data);
             return ResponseEntity.ok(response);
+
         } catch (Exception e) {
             log.error("Error previewing flat file data", e);
-            response.put("success", false);
-            response.put("message", "Failed to preview data: " + e.getMessage());
-            return ResponseEntity.badRequest().body(response);
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Failed to preview data: " + e.getMessage(),
+                    e);
         }
     }
 
@@ -187,22 +230,55 @@ public class IntegrationController {
      *
      * @param request Ingestion request with source, target, and column selection
      * @return Ingestion result with record count
+     * @throws IOException
+     * @throws SQLException
+     * @throws InterruptedException
      */
-    @PostMapping("/execute")
-    public ResponseEntity<Map<String, Object>> executeIngestion(@RequestBody IngestionRequest request) {
-        Map<String, Object> response = new HashMap<>();
+    @PostMapping(value = "/execute", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> executeIngestion(
+            @RequestPart("ingestionRequest") IngestionRequest request, @RequestPart("file") MultipartFile file)
+            throws SQLException, IOException, InterruptedException {
 
         try {
-            int recordCount = integrationService.executeIngestion(request);
-            response.put("success", true);
-            response.put("recordCount", recordCount);
-            response.put("message", "Ingestion completed successfully");
-            return ResponseEntity.ok(response);
+            integrationService.validateRequest(request);
+
+            String source = request.getSourceType().toLowerCase();
+            String target = request.getTargetType().toLowerCase();
+
+            if ("clickhouse".equals(source) && "flatfile".equals(target)) {
+
+                // ClickHouse → Flatfile: return file
+                AtomicReference<File> generatedFileRef = new AtomicReference<>();
+                int recordCount = integrationService.ingestFromClickHouseToFlatFile(request, generatedFileRef);
+
+                File generatedFile = generatedFileRef.get();
+                if (generatedFile == null || !generatedFile.exists()) {
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+                }
+
+                InputStreamResource resource = new InputStreamResource(new FileInputStream(generatedFile));
+
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.CONTENT_DISPOSITION,
+                                "attachment; filename=\"" + generatedFile.getName() + "\"")
+                        .header("X-Record-Count", String.valueOf(recordCount))
+                        .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                        .contentLength(generatedFile.length())
+                        .body(resource);
+
+            } else if ("flatfile".equals(source) && "clickhouse".equals(target)) {
+
+                // Flatfile → ClickHouse: return record count
+                int recordCount = integrationService.ingestFromFlatFileToClickHouse(request, file);
+                return ResponseEntity.ok(recordCount);
+            } else {
+                return ResponseEntity.badRequest()
+                        .body("Ingestion from " + request.getSourceType() + " to " + request.getTargetType()
+                                + " is not supported.");
+            }
         } catch (Exception e) {
-            log.error("Error executing ingestion", e);
-            response.put("success", false);
-            response.put("message", "Ingestion failed: " + e.getMessage());
-            return ResponseEntity.badRequest().body(response);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Ingestion failed: " + e.getMessage());
         }
     }
 }
