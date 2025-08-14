@@ -1,10 +1,10 @@
 import axios from "axios";
 
-const URL = "http://localhost:8081/api/integration/";
+const URL = import.meta.env.VITE_BACKEND_BASE_URL;
 
 const testClickhouseConnection = (clickhouseConfig) => {
   return axios
-    .post(`${URL}clickhouse/test-connection`, clickhouseConfig)
+    .post(`${URL}/clickhouse/test-connection`, clickhouseConfig)
     .then((res) => res.data)
     .catch((err) => {
       throw err;
@@ -13,7 +13,7 @@ const testClickhouseConnection = (clickhouseConfig) => {
 
 const fetchClickhouseTables = (clickhouseConfig) => {
   return axios
-    .post(`${URL}clickhouse/tables`, clickhouseConfig)
+    .post(`${URL}/clickhouse/tables`, clickhouseConfig)
     .then((res) => res.data)
     .catch((err) => {
       throw err;
@@ -32,8 +32,18 @@ const fetchClickhouseSchema = (clickhouseConfig, tableName) => {
     });
 };
 
+const fetchClickhousePreviewData = (ingestionReq) => {
+  return axios
+    .post(`${URL}/clickhouse/preview`, ingestionReq)
+    .then((res) => res.data)
+    .catch((err) => {
+      throw err;
+    });
+};
+
 export {
   testClickhouseConnection,
   fetchClickhouseTables,
   fetchClickhouseSchema,
+  fetchClickhousePreviewData,
 };
