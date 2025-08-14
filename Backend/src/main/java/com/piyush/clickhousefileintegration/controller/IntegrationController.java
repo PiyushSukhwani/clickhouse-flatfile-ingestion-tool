@@ -38,7 +38,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 @RequestMapping("/api/integration")
 @RequiredArgsConstructor
 @Slf4j
-@CrossOrigin(origins = "http://localhost:5173/")
+@CrossOrigin(origins = "https://clickhouse-flatfile-ingestion-tool.vercel.app/")
 public class IntegrationController {
 
     private final IntegrationService integrationService;
