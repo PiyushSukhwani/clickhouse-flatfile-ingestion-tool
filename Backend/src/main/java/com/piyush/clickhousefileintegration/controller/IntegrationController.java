@@ -236,7 +236,8 @@ public class IntegrationController {
      */
     @PostMapping(value = "/execute", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> executeIngestion(
-            @RequestPart("ingestionRequest") IngestionRequest request, @RequestPart("file") MultipartFile file)
+            @RequestPart("ingestionRequest") IngestionRequest request,
+            @RequestPart(value = "file", required = false) MultipartFile file)
             throws SQLException, IOException, InterruptedException {
 
         try {
