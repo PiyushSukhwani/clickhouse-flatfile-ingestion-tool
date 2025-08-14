@@ -1,17 +1,60 @@
-import React from "react";
+import { useRef, useState } from "react";
+import { executeIngestion } from "../services/flatFileService";
 
-const IngestionSection = ({
-  visible,
-  onStart,
-  showProgress,
-  progress,
-  showStatus,
-  statusMessage,
-  statusType, // e.g., "success", "error", "warning"
-  showResult,
-  totalRecords,
-  ref
-}) => {
+const IngestionSection = ({ source, visible, formDataRef }) => {
+  const [showProgress, setShowProgress] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [showStatus, setShowStatus] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [statusType, setStatusType] = useState("success");
+  const [showResult, setShowResult] = useState(false);
+  const [totalRecords, setTotalRecords] = useState(0);
+
+  const ref = useRef(null);
+
+  const onStart = async () => {
+    setShowProgress(true);
+    setShowStatus(false);
+    setProgress(0);
+    setShowResult(false);
+
+    try {
+      const res = await executeIngestion(formDataRef);
+
+      const interval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev >= 100) {
+            clearInterval(interval);
+            setShowProgress(false);
+            setShowStatus(true);
+            setStatusType("success");
+            setStatusMessage(
+              source === "clickhouse"
+                ? "Export completed successfully. Your updated flatfile has been downloaded."
+                : "Import completed successfully. All records have been added to your ClickHouse table."
+            );
+            setShowResult(true);
+
+            // Scroll to bottom
+            setTimeout(() => {
+              ref.current?.scrollIntoView({ behavior: "smooth" });
+            }, 100);
+
+            return 100;
+          }
+          return prev + 30;
+        });
+      }, 300);
+
+      setTotalRecords(res); // record count
+    } catch (error) {
+      setShowProgress(false);
+      setShowStatus(true);
+      setStatusType("error");
+      setStatusMessage(error.response.data);
+    }
+  };
+
   return (
     <div
       className={`${
@@ -25,16 +68,27 @@ const IngestionSection = ({
         <div className="mb-4">
           <button
             onClick={onStart}
-            className="bg-green-600 hover:bg-green-700 text-white font-medium px-5 py-2 rounded"
+            className="bg-green-600 hover:bg-green-700 text-white font-medium px-5 py-2 rounded flex justify-center items-center gap-2"
           >
-            Start Ingestion
+            {showProgress ? (
+              <>
+                <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                {source === "clickhouse"
+                  ? "Exporting, please wait..."
+                  : "Importing, please wait..."}
+              </>
+            ) : (
+              "Start Ingestion"
+            )}
           </button>
         </div>
 
         {showProgress && (
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Ingestion Progress:
+              {source === "clickhouse"
+                ? "Exporting data from ClickHouse and preparing your flatfile..."
+                : "Importing data from flatfile into ClickHouse..."}
             </label>
             <div className="w-full bg-gray-200 rounded h-6 overflow-hidden">
               <div
