@@ -5,7 +5,7 @@ import {
   testClickhouseConnection,
 } from "../services/clickhouseService";
 
-const ClickHouseConfig = ({ selectionType }) => {
+const ClickHouseConfig = ({ selectionType, setColumns, formDataRef }) => {
   const [showJoinConfig, setShowJoinConfig] = useState(false);
   const [connectionLoading, setConnectionLoading] = useState(false);
   const [tablesLoading, setTablesLoading] = useState(false);
@@ -13,7 +13,7 @@ const ClickHouseConfig = ({ selectionType }) => {
   const [error, setError] = useState(true);
   const [message, setMessage] = useState("");
   const [tables, setTables] = useState([]);
-  const [tableName, setTableName] = useState("")
+  const [selectedTable, setSelectedTable] = useState("");
 
   const [formData, setFormData] = useState({
     host: "",
@@ -27,10 +27,16 @@ const ClickHouseConfig = ({ selectionType }) => {
   const handleFormChange = (e) => {
     const { id, value } = e.target;
 
-    setFormData((prev) => ({
-      ...prev,
+    const updatedFormData = {
+      ...formData,
       [id]: id === "port" ? Number(value) : value,
-    }));
+    };
+
+    setFormData(updatedFormData);
+    formDataRef.current.set(
+      "clickHouseConfig",
+      JSON.stringify(updatedFormData)
+    );
   };
 
   const testConnection = async () => {
@@ -53,6 +59,7 @@ const ClickHouseConfig = ({ selectionType }) => {
     setMessage("");
     setTablesLoading(true);
     setTables([]);
+    formDataRef.current.set("tableName", selectedTable)
     try {
       const res = await fetchClickhouseTables(formData);
       setMessage("Tables fetched successfully.");
@@ -66,13 +73,15 @@ const ClickHouseConfig = ({ selectionType }) => {
     }
   };
 
-  const fetchSchema = async() => {
+  const fetchSchema = async () => {
+    formDataRef.current.set("tableName", selectedTable);
     try {
-      const res = await fetchClickhouseSchema(formData, )
+      const res = await fetchClickhouseSchema(formData, selectedTable);
+      setColumns?.(res?.columns);
     } catch (error) {
-      
+      console.error(error);
     }
-  }
+  };
 
   useEffect(() => {
     if (tables.length > 0) {
@@ -87,7 +96,8 @@ const ClickHouseConfig = ({ selectionType }) => {
     >
       <div className="bg-blue-500 text-white px-6 py-3 rounded-t-lg">
         <h5 className="text-lg font-medium">
-          Step 2: Configure ClickHouse Source
+          Step 2: Configure ClickHouse{" "}
+          {selectionType.charAt(0).toUpperCase() + selectionType.slice(1)}
         </h5>
       </div>
       <div className="px-6 py-4 ">
@@ -252,6 +262,7 @@ const ClickHouseConfig = ({ selectionType }) => {
                 </label>
                 <input
                   type="text"
+                  onChange={(e) => formDataRef.current.set("targetTableName", e.target.value)}
                   id="clickhouseTableName"
                   placeholder="target_table"
                   className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-3 focus:ring-[rgba(70,130,246,0.6)]"
@@ -263,13 +274,13 @@ const ClickHouseConfig = ({ selectionType }) => {
                   onClick={testConnection}
                   className={`w-full md:w-auto px-4 py-2 rounded text-white flex items-center justify-center gap-2
     ${
-      loading
+      connectionLoading
         ? "bg-blue-400 cursor-not-allowed"
         : "bg-blue-600 hover:bg-blue-700"
     }
   `}
                 >
-                  {loading ? (
+                  {connectionLoading ? (
                     <>
                       <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       Testing...
@@ -286,6 +297,7 @@ const ClickHouseConfig = ({ selectionType }) => {
         {/* Connection Result */}
         {message && (
           <div
+            ref={bottomRef}
             id="clickhouseConnectionResult"
             className={`my-6 px-6 py-5 rounded-lg  border ${
               error
@@ -299,28 +311,32 @@ const ClickHouseConfig = ({ selectionType }) => {
 
         {/* Table Selection */}
         {tables?.length > 0 && (
-          <div ref={bottomRef} id="clickhouseTableSelection" className="mt-6">
+          <div id="clickhouseTableSelection" className="mt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
               <div>
                 <label
                   htmlFor="clickhouseTableList"
-                  className="block text-sm font-medium mb-1 text-gray-800"
+                  className="block text-md font-medium mb-2 text-gray-800"
                 >
                   Select Table:
                 </label>
                 <select
                   id="clickhouseTableList"
+                  onChange={(e) => setSelectedTable(e.target.value)}
                   className="w-full border rounded-md px-3 py-2 border-gray-300 focus:outline-none focus:ring-3 focus:ring-[rgba(70,130,246,0.6)]"
                 >
                   <option value="">-- Select Table --</option>
-                  {tables?.map((table) => (
-                    <option value={table}>{table}</option>
+                  {tables?.map((table, idx) => (
+                    <option value={table} key={idx}>
+                      {table}
+                    </option>
                   ))}
                 </select>
               </div>
               <div className="flex items-end">
                 <button
                   id="loadClickhouseColumns"
+                  onClick={fetchSchema}
                   className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
                 >
                   Load Columns
@@ -329,7 +345,7 @@ const ClickHouseConfig = ({ selectionType }) => {
             </div>
 
             {/* Multi-Table Join */}
-            <div className="mb-4">
+            <div className="mb-4 hidden">
               <label className="inline-flex items-center">
                 <input
                   type="checkbox"
@@ -343,7 +359,7 @@ const ClickHouseConfig = ({ selectionType }) => {
 
             {/* Join Configuration */}
             {showJoinConfig && (
-              <div id="joinConfiguration">
+              <div id="joinConfiguration" className="hidden">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
                   <div>
                     <label
