@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchClickhousePreviewData } from "../services/clickhouseService";
 import { fetchFlatFilePreviewData } from "../services/flatFileService";
 
@@ -11,11 +11,13 @@ const ColumnSelectionSection = ({
 }) => {
   const [columnsState, setColumnsState] = useState([]);
   const [loading, setLoading] = useState(false);
+  const bottomRef = useRef();
 
   useEffect(() => {
     const initialized = columns.map((col) => ({ ...col, selected: true }));
     setColumnsState(initialized);
     formDataRef.current.set("selectedColumns", JSON.stringify(initialized));
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [columns]);
 
   const handleSelectAll = () => {
@@ -47,7 +49,7 @@ const ColumnSelectionSection = ({
       if (source === "clickhouse") {
         const fd = formDataRef.current;
         const previewRequest = {
-          clickHouseConfig: JSON.parse(fd.get("clickhouseConfig") || "{}"),
+          clickHouseConfig: JSON.parse(fd.get("clickHouseConfig") || "{}"),
           tableName: fd.get("tableName") || "",
           selectedColumns: columnsState,
         };
@@ -57,6 +59,7 @@ const ColumnSelectionSection = ({
         res = await fetchFlatFilePreviewData(formDataRef);
       }
 
+      formDataRef.current.set("previewData", JSON.stringify(res.data));
       setPreviewData(res.data);
       res.data.length > 0
         ? setPreviewDataMessage("")
@@ -70,7 +73,7 @@ const ColumnSelectionSection = ({
   };
 
   return (
-    <div className="mb-4 shadow">
+    <div className="mb-4 shadow" ref={bottomRef}>
       <div className="bg-blue-500 text-white px-4 py-3 rounded-t">
         <h5 className="mb-0 text-lg font-semibold">
           Step 4: Select Columns for Ingestion

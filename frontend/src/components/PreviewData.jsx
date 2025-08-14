@@ -1,15 +1,23 @@
+import { useEffect, useRef } from "react";
+
 const DataPreview = ({ data, visible, formDataRef, previewDataMessage }) => {
   const selectedColumns = JSON.parse(
     formDataRef.current.get("selectedColumns") || "[]"
   )?.filter((col) => col.selected);
 
-  const previewRows = data.slice(0, 100);
+  const previewRows = data?.slice(0, 100);
+  const bottomRef = useRef();
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [data]);
 
   return (
     <div
       className={`${
         visible ? "block" : "hidden"
       } mb-4 rounded-lg shadow border border-gray-400`}
+      ref={bottomRef}
     >
       <div className="bg-blue-600 text-white px-4 py-3 rounded-t-lg">
         <h5 className="m-0 text-lg font-semibold">Step 5: Data Preview</h5>

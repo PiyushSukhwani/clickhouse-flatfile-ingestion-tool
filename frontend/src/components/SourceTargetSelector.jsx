@@ -1,12 +1,14 @@
 import { useState } from "react";
 
-const SourceTargetSelector = ({ onSourceChange, onTargetChange }) => {
+const SourceTargetSelector = ({ onSourceChange, onTargetChange, formDataRef }) => {
   const [selectedDirection, setSelectedDirection] = useState("");
 
   const handleSelection = (source, target, directionKey) => {
     setSelectedDirection(directionKey);
     onSourceChange(source);
     onTargetChange(target);
+    formDataRef.current.set("sourceType", source);
+    formDataRef.current.set("targetType", target);
   };
 
   return (
